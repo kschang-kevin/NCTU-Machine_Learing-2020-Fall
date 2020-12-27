@@ -1,7 +1,7 @@
 from PIL import Image
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
-import numba as nb
+import matplotlib.pyplot as plt
 
 K = 2
 
@@ -17,12 +17,38 @@ def read_data(file_name):
     position = np.array(position)
     return position, pixel
 
-def initial(method):
+def initial(method, data):
     if method == 'random_partition':
         classification = np.random.randint(0, K, size=10000)
-        C_x = np.random.randint(0, 100, size=K)
-        C_y = np.random.randint(0, 100, size=K)
-        mu = np.array(list(zip(C_x, C_y)), dtype=np.float32)
+        mu = np.zeros((K, K), dtype=np.float)
+        count = np.zeros(K, dtype=np.float)
+        for i in range(len(classification)):
+            mu[classification[i]] += data[i]
+            count[classification[i]] += 1
+        for i in range(K):
+            mu[i] /= count[i]
+    if method == 'kmeans++':
+        initial_center = np.random.randint(0, 10000, size=1)
+        mu = np.zeros((K, K), dtype=np.float) 
+        mu[0] = data[initial_center]
+        for p in range(1, K):
+            distance = np.zeros(10000, dtype=np.int)
+            for i in range(len(data)):
+                dis = np.zeros(p, dtype=np.int)
+                for j in range(p):
+                    tmp = 0
+                    for k in range(len(data[0])):
+                        tmp += (data[i][k] - mu[j][k]) ** 2
+                    dis[j] = tmp
+                distance[i] = min(dis)
+            mu[p] = data[np.argmin(distance)]
+        classification = np.zeros(10000, dtype=np.int)
+        for i in range(10000):
+            distance = np.zeros(K, dtype=np.float32)
+            for j in range(K):
+                for k in range(K):
+                    distance[j] += abs(data[i][k] - mu[j][k]) ** 2
+            classification[i] = np.argmin(distance)
     return mu, classification
 
 def kernel(spatial, color):
@@ -38,11 +64,11 @@ def kernel(spatial, color):
 def visualization(classification, iteration, file_name, method):
     img = Image.open(file_name)
     pixel = img.load()
-    color = [(0,0,0), (125, 0, 0), (0, 255, 0), (255, 255, 255)]
+    color = [(0, 0, 0), (125, 0, 0), (0, 255, 0), (0, 255, 255)]
     for i in range(100):
         for j in range(100):
             pixel[j, i] = color[classification[i * 100 + j]]
-    img.save(file_name.split('.')[0] + '_' + str(K) + '_' + str(method) + '_' + str(iteration) + '.png')
+    img.save(file_name.split('.')[0] + str(K) + '_' + str(method) + '_' + str(iteration) + '.png')
 
 def classify(data, mu):
     classification = np.zeros(10000, dtype=np.int)
@@ -73,24 +99,19 @@ def update(data, mu, classification):
     return new_mu
 
 def draw(classification, data):
-    color = iter(plt.cm.rainbow(np.linspace(0, 1, K)))
-    plt.clf()
-    for cluster in range(K):
-        col = next(color)
-        for j in range(0, data.shape[0]):
-            if classification[j] == cluster:
-                plt.scatter(data[j][0], data[j][1], s=8, c=[col])
+    color = [(0, 0, 0), (0.5, 0, 0), (0, 1, 0), (0, 1, 1)]
+    for i in range(len(data)):
+        plt.scatter(data[i][0], data[i][1], s=8, c=[color[classification[i]]])
     plt.show()
 
 def spectral_clustering(file_name, data):
-    initial_methods = ['random_partition']
+    initial_methods = ['random_partition', 'kmeans++']
     for method in initial_methods:
-        mu, classification = initial(method)
+        mu, classification = initial(method, data)
         iteration = 0
-        old_diff = 0
+        old_diff = 1e9
         visualization(classification, iteration, file_name, method)
         while iteration < 20:
-            print(iteration)
             iteration += 1
             old_classification = classification
             classification = classify(data, mu)
@@ -117,7 +138,7 @@ def normalized_cut(spatial, color):
         for j in range(T.shape[1]):
             sum_tmp = 0
             for k in range(T.shape[1]):
-                sum_tmp += U[i][j] ** 2
+                sum_tmp += U[i][k] ** 2
             T[i][j] = U[i][j] / (sum_tmp ** 0.5)
     
     return T
@@ -125,7 +146,7 @@ def normalized_cut(spatial, color):
 def ratio_cut(spatial, color):    
     W = kernel(spatial, color)
     D = np.diag(np.sum(W, axis=1))
-    L = W - D
+    L = D - W
     
     eigen_values, eigen_vectors = np.linalg.eig(L)
     idx = np.argsort(eigen_values)[1: K+1]
@@ -135,5 +156,5 @@ def ratio_cut(spatial, color):
     
 if __name__ == '__main__':
     spatial, color = read_data('image1.png')
-    data = ratio_cut(spatial, color)
+    data = normalized_cut(spatial, color)
     spectral_clustering('image1.png', data)

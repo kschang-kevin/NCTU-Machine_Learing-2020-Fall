@@ -1,7 +1,7 @@
 from PIL import Image
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
-import numba as nb
+
 K = 4
 
 def read_data(file_name):
@@ -40,18 +40,17 @@ def kernel(spatial, color):
     color_rbf = np.exp(-gamma_c * color_sq_dists)
     kernel = spatial_rbf * color_rbf
 
-    return kernel
+    return color_rbf 
 
 def visualization(classification, iteration, file_name, method):
     img = Image.open(file_name)
     pixel = img.load()
-    color = [(0,0,0), (125, 0, 0), (0, 255, 0), (255, 255, 255)]
+    color = [(0,0,0), (125, 0, 0), (0, 255, 0), (255, 255, 255), (255, 0, 255)]
     for i in range(100):
         for j in range(100):
             pixel[j, i] = color[classification[i * 100 + j]]
     img.save(file_name.split('.')[0] + '_' + str(K) + '_' + str(method) + '_' + str(iteration) + '.png')
 
-@nb.jit
 def classify(gram_matrix, classification):
     new_classification = np.zeros(10000, dtype=np.int)
     third_term = np.zeros(K, dtype=np.int)
@@ -88,7 +87,7 @@ def difference(classification, old_classification):
 
 def K_means(file_name, spatial, color):
     gram_matrix = kernel(spatial, color)
-    initial_methods = ['random_partition', 'Forgy']
+    initial_methods = ['random_partition']
     for method in initial_methods:
         classification = initial(method)         
         iteration = 0
