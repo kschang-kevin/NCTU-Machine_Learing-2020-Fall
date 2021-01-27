@@ -3,10 +3,7 @@ import re
 import cv2
 import numpy as np
 from scipy.spatial.distance import cdist, pdist, squareform
-
-gamma = 1e-3
-SUBJECT = 11
-
+from PIL import Image
 
 def read_input(dir):
     training_file = os.listdir(dir)
@@ -16,9 +13,11 @@ def read_input(dir):
         file_name = dir + file
         number = int(file_name.split('subject')[1].split('.')[0])
         subject.append(number)
-        img = cv2.imread(file_name, 0)
-        img = cv2.resize(img, (60, 60))
-        data.append(img.reshape(60 * 60))
+        img = Image.open(file_name)
+        img = img.resize((60,60), Image.ANTIALIAS)
+        width, height = img.size
+        pixel = np.array(img.getdata()).reshape((60*60))
+        data.append(pixel)
     return np.array(data), np.array(subject)
 
 def computeWithinClass(data, subject):
@@ -37,12 +36,12 @@ def computeBetweenClass(data, subject):
     class_mean = np.zeros((15, data.shape[1]))
     for i in range(len(data)):
         class_mean[subject[i]-1] += data[i]
-    class_mean = class_mean / 11
+    class_mean = class_mean / 9
     all_mean = (np.sum(data, axis=0) / len(data)).reshape(-1, 1)
 
     between_class = np.zeros((data.shape[1], data.shape[1]))
     for i in range(15):
-        tmp = 11 *  (class_mean[i] - all_mean[i]).reshape(data.shape[1], 1)
+        tmp = 9 *  (class_mean[i] - all_mean[i]).reshape(data.shape[1], 1)
         between_class += tmp.dot(tmp.T)       
     return between_class 
 
@@ -55,7 +54,7 @@ def visualization(data):
 def draweigenface(eigen_vectors):
     eigen_vectors = eigen_vectors.T
     for i in range(25):
-        img = (eigen_vectors[i]-min(eigen_vectors[i]))/(max(eigen_vectors[i])-min(eigen_vectors[i])) * 255
+        img = (eigen_vectors[i] - min(eigen_vectors[i])) / (max(eigen_vectors[i]) - min(eigen_vectors[i])) * 255
         cv2.imwrite('./eigen_face/' + str(i) + '.png',img.reshape(60, 60))
 
 
@@ -75,80 +74,54 @@ def checkperformance(testing_subject, predict):
             correct += 1
     print(correct / len(testing_subject))
 
-def kernelLDA(data, target, method):
-    gram_matrix = None
-    if method == 'rbf':
-        sq_dists = squareform(pdist(data), 'sqeuclidean')
-        gram_matrix = np.exp(-gamma * sq_dists)
-    elif method == 'linear':
-        gram_matrix = np.matmul(data, data.T)
+def kernelLDA(gram_matrix, subject):
+    within_class = np.zeros((gram_matrix.shape[0], gram_matrix.shape[0]))
+    for i in range(15):
+        class_mean = gram_matrix[np.where(subject == i+1)[0]].copy()
+        class_mean = np.sum(class_mean, axis=0).reshape(-1, 1) / 9
+        tmp = np.subtract(gram_matrix[np.where(subject == i+1)[0]].T, class_mean)
+        within_class += tmp.dot(tmp.T)
 
-    M = np.zeros([data.shape[0], data.shape[0]])
-    for i in range(CLASS):
-        classM = gram_matrix[np.where(target == i+1)[0]].copy()
-        classM = np.sum(classM, axis=0).reshape(-1, 1) / SUBJECT
-        allM = gram_matrix[np.where(target == i+1)[0]].copy()
-        allM = np.sum(allM, axis=0).reshape(-1, 1) / data.shape[0]
-        dist = np.subtract(classM, allM)
-        multiplydist = SUBJECT * np.matmul(dist, dist.T)
-        M += multiplydist
-
-    N = np.zeros([data.shape[0], data.shape[0]])
-    I_minus_one = np.identity(SUBJECT) - (SUBJECT * np.ones((SUBJECT, SUBJECT)))
-    for i in range(CLASS):
-        Kj = gram_matrix[np.where(target == i+1)[0]].copy()
-        multiply = np.matmul(Kj.T, np.matmul(I_minus_one, Kj))
-        N += multiply
-
-    eigenvectors = compute_eigen(np.matmul(np.linalg.pinv(N), M))
-    lower_dimension_data = np.matmul(gram_matrix, eigenvectors)
-    return lower_dimension_data
+    between_class = np.zeros((gram_matrix.shape[0], gram_matrix.shape[0]))
+    for i in range(15):
+        class_mean = gram_matrix[np.where(subject == i+1)[0]].copy()
+        class_mean = np.sum(class_mean, axis=0).reshape(-1, 1) / 9
+        all_mean = np.sum(gram_matrix, axis=0).reshape(-1, 1) / gram_matrix.shape[0]
+        tmp = np.subtract(class_mean, all_mean)
+        between_class += 9 * tmp.dot(tmp.T)    
+        
+    eigen_values, eigen_vectors = np.linalg.eigh(np.linalg.pinv(within_class).dot(between_class))
+    idx = eigen_values.argsort()[::-1]
+    eigen_vectors = eigen_vectors[:,idx][:,:25]
+    return eigen_vectors
 
 if __name__ == '__main__':
+    # LDA
     training_data, training_subject = read_input('./Yale_Face_Database/Training/')
-    # within_class_scatter = computeWithinClass(training_data, training_subject)
-    # between_class_scatter = computeBetweenClass(training_data, training_subject)
-    
-    # eigen_values, eigen_vectors = np.linalg.eigh(np.linalg.pinv(within_class_scatter).dot(between_class_scatter))
-    # idx = eigen_values.argsort()[::-1]
-    # eigen_vectors = eigen_vectors[:,idx][:,:25]
-    # lower_dimension_data = training_data.dot(eigen_vectors)
-    # reconstruct_data = lower_dimension_data.dot(eigen_vectors.T)
-    # visualization(reconstruct_data)
-    # draweigenface(eigen_vectors)
-
-    testing_data, testing_subject = read_input('./Yale_Face_Database/Testing/')
-    data = np.concatenate((training_data, testing_data), axis=0)
-    subject = np.concatenate((training_subject, testing_subject), axis=0)
-    within_class_scatter = computeWithinClass(data, subject)
-    between_class_scatter = computeBetweenClass(data, subject)
-    
+    within_class_scatter = computeWithinClass(training_data, training_subject)
+    between_class_scatter = computeBetweenClass(training_data, training_subject)
     eigen_values, eigen_vectors = np.linalg.eigh(np.linalg.pinv(within_class_scatter).dot(between_class_scatter))
     idx = eigen_values.argsort()[::-1]
     eigen_vectors = eigen_vectors[:,idx][:,:25]
-    lower_dimension_data = data.dot(eigen_vectors)
-    lower_dimension_testing_data = lower_dimension_data[training_data.shape[0]:].copy()
-    lower_dimension_training_data = lower_dimension_data[:training_data.shape[0]].copy()
+    lower_dimension_training_data = training_data.dot(eigen_vectors)
+    reconstruct_data = lower_dimension_training_data.dot(eigen_vectors.T)
+    visualization(reconstruct_data)
+    draweigenface(eigen_vectors)
 
+    testing_data, testing_subject = read_input('./Yale_Face_Database/Testing/')
+    lower_dimension_testing_data = testing_data.dot(eigen_vectors)
     predict = KNN(lower_dimension_training_data, lower_dimension_testing_data, training_subject)
     checkperformance(testing_subject, predict)
 
+    # Kernel LDA
+    # training_gram_matrix = training_data.dot(training_data.T)
+    training_gram_matrix = np.power(training_data.dot(training_data.T), 2)
+    eigen_vectors = kernelLDA(training_gram_matrix, training_subject)
+    lower_dimension_training_data = training_gram_matrix.dot(eigen_vectors)
 
-    # print("=======================================================================")
-
-    # #Kernel LDA
-    # dirtrain = './Training/'
-    # dirtest = './Testing/'
-    # storedir = './LDA_result/'
-    # method = 'linear'
-    # data, target, totalfile = read_input(dirtrain)      
-    # datatest, targettest, totalfiletest = read_input(dirtest)
-    # data = np.concatenate((data, datatest), axis=0)                 #data : 165 x 3600, 
-    # target = np.concatenate((target, targettest), axis=0)           #target : 165 x 1
-    # lower_dimension_data = kernelLDA(data, target, method)
-    # lower_dimension_data_train = lower_dimension_data[:totalfile.shape[0]].copy()
-    # lower_dimension_data_test = lower_dimension_data[totalfile.shape[0]:].copy()
-    # targettrain = target[:totalfile.shape[0]].copy()
-    # targettest = target[totalfile.shape[0]:].copy()
-    # predict = KNN(lower_dimension_data_train, lower_dimension_data_test, targettrain)
-    # checkperformance(targettest, predict)
+    # testing_gram_matrix = testing_data.dot(training_data.T)
+    testing_gram_matrix = np.power(testing_data.dot(training_data.T), 2)
+    lower_dimension_testing_data = testing_gram_matrix.dot(eigen_vectors)
+    
+    predict = KNN(lower_dimension_training_data, lower_dimension_testing_data, training_subject)
+    checkperformance(testing_subject, predict)
